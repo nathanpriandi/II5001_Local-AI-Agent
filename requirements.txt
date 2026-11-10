@@ -1,0 +1,6 @@
+# Django Oscar 4.2.1 is tested with Django 6.0 (needs Python 3.12 or newer)
+django>=6.0,<6.1
+django-oscar[sorl-thumbnail]==4.2.1
+pycountry
+ollama>=0.6
+whoosh>=2.7,<2.8

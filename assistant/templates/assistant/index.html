@@ -1,0 +1,186 @@
+{% extends 'oscar/dashboard/layout.html' %}
+{% load i18n %}
+
+{% block title %}AI Assistant | {{ block.super }}{% endblock %}
+
+{% block breadcrumbs %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">{% trans "Dashboard" %}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">AI Assistant</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block header %}
+<div class="page-header">
+  <button id="reset" class="btn btn-secondary float-right">Reset conversation</button>
+  <h1><i class="fas fa-robot"></i> Store Ops Assistant</h1>
+  <p class="text-muted mb-0">Local AI agent ({{ model_name }} via Ollama). Reads this shop's catalogue, stock and orders; restocks only after you confirm.</p>
+</div>
+{% endblock header %}
+
+{% block dashboard_content %}
+<style>
+  #log { height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 4px; }
+  .msg { padding: 10px 12px; border-radius: 8px; max-width: 92%; white-space: pre-wrap; line-height: 1.45; }
+  .msg.user { background: #e7f0ff; align-self: flex-end; }
+  .msg.bot { background: #f3f4f6; align-self: flex-start; }
+  .msg.err { background: #fdecea; color: #b71c1c; }
+  .msg.note { background: #e8f5e9; align-self: center; font-size: 13px; }
+  .trace { font-size: 12px; color: #6b7280; margin-top: 6px; }
+  .trace pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; margin: 4px 0; }
+  .action-card { border: 1px solid #f0ad4e; background: #fff8e6; border-radius: 8px; padding: 10px; margin-top: 8px; }
+  .chips .btn { margin: 2px; }
+</style>
+
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card mb-3">
+      <div class="card-body">
+        <div id="log"></div>
+        <form id="form" class="d-flex mt-2">
+          <input id="input" class="form-control mr-2" autocomplete="off"
+                 placeholder="e.g. Which products are running low, and what should I reorder?">
+          <button id="send" class="btn btn-primary">Send</button>
+        </form>
+        <div class="chips mt-2">
+          <button type="button" class="btn btn-sm btn-outline-secondary">Which products are low on stock or sold out?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">What were our best sellers this week, and how much revenue?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">How is the ESP32 selling? Should we reorder?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">Restock the sold-out sensor with 30 units.</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">Show the 3 most recent orders.</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header"><i class="fas fa-exclamation-triangle"></i> Low stock (live from Oscar)</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Product</th><th>Avail.</th><th>Threshold</th></tr></thead>
+          <tbody id="lowstock"><tr><td colspan="3">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header"><i class="fas fa-info-circle"></i> How it works</div>
+      <div class="card-body small">
+        The model runs on this computer. It chooses tools (search products, stock, sales, orders),
+        Django runs them on the Oscar database, and the model answers from the results.
+        Restock requests appear as cards and only change stock when you click Confirm.
+        Changes are visible under Catalogue &gt; Products.
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock dashboard_content %}
+
+{% block extrascripts %}
+{{ block.super }}
+<script>
+(function () {
+  const csrf = "{{ csrf_token }}";
+  const urls = {
+    chat: "{% url 'assistant-chat' %}",
+    reset: "{% url 'assistant-reset' %}",
+    snapshot: "{% url 'assistant-snapshot' %}",
+    confirm: "{% url 'assistant-confirm' 'ID' %}",
+    cancel: "{% url 'assistant-cancel' 'ID' %}",
+  };
+  const log = document.getElementById("log");
+  const input = document.getElementById("input");
+  const send = document.getElementById("send");
+
+  // Escape text, then allow **bold** from the model's markdown
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+  const fmt = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+  function post(url, body) {
+    return fetch(url, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrf},
+      body: JSON.stringify(body || {}),
+    }).then(r => r.json());
+  }
+
+  function add(html, cls) {
+    const div = document.createElement("div");
+    div.className = "msg " + cls;
+    div.innerHTML = html;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function traceBlock(trace) {
+    // Shows which tools the agent called, with arguments and raw results
+    if (!trace || !trace.length) return "";
+    return "<details class='trace'><summary>Agent used " + trace.length + " tool call(s)</summary>" +
+      trace.map(t => "<pre>" + esc(t.tool + "(" + JSON.stringify(t.args) + ")\n-> " + t.result) + "</pre>").join("") +
+      "</details>";
+  }
+
+  function actionCard(a) {
+    // Human-in-the-loop: restock only happens after a staff click
+    const card = document.createElement("div");
+    card.className = "action-card";
+    card.innerHTML = "<strong>Restock request:</strong> +" + a.quantity + " x " + esc(a.title) +
+      " (stock " + a.current_stock + " &rarr; " + a.stock_after + ")<br><small>" + esc(a.reason) + "</small><br>" +
+      "<button class='btn btn-sm btn-success mt-2 mr-1'>Confirm</button>" +
+      "<button class='btn btn-sm btn-outline-secondary mt-2'>Cancel</button>";
+    const [ok, no] = card.querySelectorAll("button");
+    ok.onclick = async () => {
+      ok.disabled = no.disabled = true;
+      const r = await post(urls.confirm.replace("ID", a.action_id));
+      card.innerHTML = r.error ? esc(r.error) : "&#10003; " + esc(r.message);
+      refresh();
+    };
+    no.onclick = async () => {
+      ok.disabled = no.disabled = true;
+      const r = await post(urls.cancel.replace("ID", a.action_id));
+      card.innerHTML = esc(r.message || r.error);
+    };
+    return card;
+  }
+
+  async function ask(text) {
+    if (!text) return;
+    add(esc(text), "user");
+    input.value = "";
+    send.disabled = true;
+    const waiting = add("Thinking... (CPU inference can take 20-60 seconds)", "bot");
+    try {
+      const r = await post(urls.chat, {message: text});
+      waiting.remove();
+      if (r.error) { add(esc(r.error), "bot err"); }
+      else {
+        const div = add(fmt(r.reply) + traceBlock(r.trace), "bot");
+        (r.pending || []).forEach(a => div.appendChild(actionCard(a)));
+        log.scrollTop = log.scrollHeight;
+      }
+    } catch (e) {
+      waiting.remove();
+      add("Request failed: " + esc(e), "bot err");
+    }
+    send.disabled = false;
+    refresh();
+  }
+
+  async function refresh() {
+    const r = await fetch(urls.snapshot).then(x => x.json());
+    document.getElementById("lowstock").innerHTML = r.low_stock.length ? r.low_stock.map(p =>
+      "<tr><td>" + esc(p.title) + "</td><td class='" + (p.sold_out ? "text-danger font-weight-bold" : "") + "'>" +
+      p.num_available + "</td><td>" + p.low_stock_threshold + "</td></tr>").join("")
+      : "<tr><td colspan='3'>Nothing low on stock.</td></tr>";
+  }
+
+  document.getElementById("form").addEventListener("submit", e => { e.preventDefault(); ask(input.value.trim()); });
+  document.querySelectorAll(".chips .btn").forEach(b => b.addEventListener("click", () => ask(b.textContent)));
+  document.getElementById("reset").addEventListener("click", async () => { await post(urls.reset); log.innerHTML = ""; });
+  refresh();
+})();
+</script>
+{% endblock %}
