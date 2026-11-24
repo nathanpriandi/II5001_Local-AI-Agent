@@ -10,6 +10,7 @@ import json
 import ollama
 from django.conf import settings
 from django.http import JsonResponse
+from django.db import transaction
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
 
@@ -30,6 +31,7 @@ def index(request):
 
 
 @require_POST
+@transaction.non_atomic_requests  # a model call can take a minute; do not hold a database transaction open
 def chat(request):
     """Run one agent turn and return the reply, tool trace and pending actions."""
     try:
@@ -58,23 +60,22 @@ def chat(request):
 
 @require_POST
 def confirm_action(request, action_id):
-    """Staff clicked Confirm: apply the restock to Oscar's stock record."""
+    """Staff clicked Confirm: the proposal becomes an approved purchase order."""
     stored = request.session.get(PENDING_KEY, {})
     action = stored.pop(action_id, None)
     if action is None:
         return JsonResponse({"error": "This request was already handled or has expired."}, status=404)
 
-    new_stock = apply_restock(action)
+    po = apply_restock(action, request.user)
     request.session[PENDING_KEY] = stored
-    if new_stock is None:
-        return JsonResponse({"error": "Stock record no longer exists."}, status=404)
 
-    # Tell the agent what happened, so follow-up questions use the new numbers
-    note = f"Staff confirmed: added {action['quantity']} units to {action['title']}. Stock is now {new_stock}."
+    # Tell the agent what happened, so follow-up questions use the new state
+    note = (f"Staff approved {po.ref}: {po.quantity} x {po.product.title} ordered from the supplier (${po.amount}). "
+            f"Stock rises when the delivery is received in the Agent Control Center.")
     history = _history(request)
     history.append({"role": "assistant", "content": note})
     request.session[HISTORY_KEY] = history
-    return JsonResponse({"message": note, "new_stock": new_stock})
+    return JsonResponse({"message": note, "po": po.ref})
 
 
 @require_POST

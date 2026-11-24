@@ -15,8 +15,8 @@
 {% block header %}
 <div class="page-header">
   <button id="reset" class="btn btn-secondary float-right">Reset conversation</button>
-  <h1><i class="fas fa-robot"></i> Store Ops Assistant</h1>
-  <p class="text-muted mb-0">Local AI agent ({{ model_name }} via Ollama). Reads this shop's catalogue, stock and orders; restocks only after you confirm.</p>
+  <h1><i class="fas fa-robot"></i> Store Agent chat</h1>
+  <p class="text-muted mb-0">Chat with the Store Agent ({{ model_name }} via Ollama, on this computer). It reads catalogue, stock, orders and purchase orders. Its background work is in the <a href="{% url 'assistant-control' %}">Agent Control Center</a>.</p>
 </div>
 {% endblock header %}
 
@@ -48,6 +48,8 @@
           <button type="button" class="btn btn-sm btn-outline-secondary">Which products are low on stock or sold out?</button>
           <button type="button" class="btn btn-sm btn-outline-secondary">What were our best sellers this week, and how much revenue?</button>
           <button type="button" class="btn btn-sm btn-outline-secondary">How is the ESP32 selling? Should we reorder?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">How many days will the ESP32 stock last?</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary">Which purchase orders are open?</button>
           <button type="button" class="btn btn-sm btn-outline-secondary">Restock the sold-out sensor with 30 units.</button>
           <button type="button" class="btn btn-sm btn-outline-secondary">Show the 3 most recent orders.</button>
         </div>
@@ -70,8 +72,8 @@
       <div class="card-body small">
         The model runs on this computer. It chooses tools (search products, stock, sales, orders),
         Django runs them on the Oscar database, and the model answers from the results.
-        Restock requests appear as cards and only change stock when you click Confirm.
-        Changes are visible under Catalogue &gt; Products.
+        Restock requests appear as cards; Confirm turns them into a purchase order to the supplier.
+        Stock rises when you mark the delivery as received in the Agent Control Center.
       </div>
     </div>
   </div>
@@ -127,8 +129,8 @@
     // Human-in-the-loop: restock only happens after a staff click
     const card = document.createElement("div");
     card.className = "action-card";
-    card.innerHTML = "<strong>Restock request:</strong> +" + a.quantity + " x " + esc(a.title) +
-      " (stock " + a.current_stock + " &rarr; " + a.stock_after + ")<br><small>" + esc(a.reason) + "</small><br>" +
+    card.innerHTML = "<strong>Purchase order request:</strong> " + a.quantity + " x " + esc(a.title) +
+      " (stock now " + a.current_stock + ", " + a.stock_after + " after delivery)<br><small>" + esc(a.reason) + "</small><br>" +
       "<button class='btn btn-sm btn-success mt-2 mr-1'>Confirm</button>" +
       "<button class='btn btn-sm btn-outline-secondary mt-2'>Cancel</button>";
     const [ok, no] = card.querySelectorAll("button");

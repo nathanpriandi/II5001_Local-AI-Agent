@@ -218,8 +218,8 @@ def get_recent_orders(limit: int = 5) -> str:
 # ---------------------------------------------------------------------------
 def propose_restock(product_id: int, quantity: int, reason: str) -> str:
     """
-    Propose adding stock to a product. This does NOT change stock yet: it
-    creates a request that a staff member must confirm in the interface.
+    Propose a purchase order to the supplier for a product. This does NOT
+    order anything yet: it creates a request that a staff member must confirm.
     Only use this when the user asks to restock or reorder.
 
     Args:
@@ -253,19 +253,73 @@ def propose_restock(product_id: int, quantity: int, reason: str) -> str:
     })
 
 
-def apply_restock(action):
-    """Executed by the view only after a staff member clicks Confirm."""
-    updated = StockRecord.objects.filter(pk=action["stockrecord_id"]).update(
-        num_in_stock=F("num_in_stock") + action["quantity"]
-    )
-    if not updated:
-        return None
-    return StockRecord.objects.get(pk=action["stockrecord_id"]).num_in_stock
+def apply_restock(action, user):
+    """Executed by the view only after a staff member clicks Confirm: becomes a purchase order."""
+    from agentic.commerce import log, unit_cost
+    from agentic.guard import money
+    from agentic.models import AgentAction, PurchaseOrder
+    product = Product.objects.get(pk=action["product_id"])
+    cost = unit_cost(product)
+    po = PurchaseOrder.objects.create(
+        product=product, quantity=action["quantity"], unit_cost=cost, amount=money(cost * action["quantity"]),
+        status=PurchaseOrder.APPROVED, created_by="Store Agent (chat)", approved_by=user.get_username(),
+        reason=action.get("reason", ""), decided_at=timezone.now())
+    log("Staff", f"Approved {po.ref} from chat", f"{po.quantity} x {product.title} = ${po.amount}",
+        AgentAction.SUCCESS, user=user)
+    return po
+
+
+def get_stock_outlook(product_id: int) -> str:
+    """
+    Get how many days the current stock of one product will last, plus open
+    purchase orders and units that buyers delegated to their Shopping Agents.
+
+    Args:
+        product_id: The product_id from search_products or list_low_stock
+
+    Returns:
+        str: JSON with available stock, average daily sales, days of cover and open orders
+    """
+    from agentic.commerce import delegated_demand, stock_metrics, suggested_reorder
+    product = _find_product(product_id)
+    if product is None:
+        return _not_found(product_id)
+    m = stock_metrics(product)
+    demand = delegated_demand(product)
+    m["delegated_demand_units"] = demand
+    m["suggested_reorder_quantity"] = suggested_reorder(m, demand)
+    m["open_purchase_orders"] = [
+        {"po": po.ref, "quantity": po.quantity, "status": po.status}
+        for po in product.purchase_orders.filter(status__in=["awaiting_approval", "approved"])]
+    return json.dumps(m)
+
+
+def list_purchase_orders(status: str = "open") -> str:
+    """
+    List purchase orders to the supplier, including those the Store Agent placed on its own.
+
+    Args:
+        status: "open" (awaiting approval or on the way), "received" or "all"
+
+    Returns:
+        str: JSON list of purchase orders, newest first
+    """
+    from agentic.models import PurchaseOrder
+    qs = PurchaseOrder.objects.select_related("product")
+    if status == "open":
+        qs = qs.filter(status__in=["awaiting_approval", "approved"])
+    elif status in ("received", "rejected", "approved", "awaiting_approval"):
+        qs = qs.filter(status=status)
+    return json.dumps([
+        {"po": po.ref, "product": po.product.title, "quantity": po.quantity, "amount_usd": float(po.amount),
+         "status": po.status, "created_by": po.created_by, "approved_by": po.approved_by, "reason": po.reason}
+        for po in qs[:10]] or {"result": "No purchase orders."})
 
 
 # Registry passed to the model (name -> function)
 TOOLS = {
     f.__name__: f
     for f in (search_products, get_product_details, list_low_stock,
-              get_sales_summary, get_recent_orders, propose_restock)
+              get_sales_summary, get_recent_orders, get_stock_outlook,
+              list_purchase_orders, propose_restock)
 }

@@ -1,0 +1,205 @@
+{% extends "oscar/layout.html" %}
+{% load i18n %}
+
+{% block title %}Shopping Agent | {{ block.super }}{% endblock %}
+
+{% block breadcrumbs %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{{ homepage_url }}">{% trans "Home" %}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Shopping Agent</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block header %}
+<div class="page-header d-flex flex-wrap justify-content-between align-items-end">
+  <div>
+    <h1 class="mb-1"><i class="fas fa-robot"></i> Your Shopping Agent</h1>
+    <p class="text-muted mb-0">It plans carts, watches for stock while you are away and negotiates bulk prices with the store's agent. It runs on a local model and can only spend what you sign for.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+  .sa-card { border: 1px solid #e3e6ea; border-radius: 12px; }
+  .sa-tabs .nav-link { font-weight: 600; color: #3b4450; }
+  .sa-tabs .nav-link.active { color: #0c4a9c; }
+  .chip { display: inline-block; margin: 3px 4px 0 0; }
+  .step { display: flex; gap: 10px; padding: 6px 0; border-bottom: 1px dashed #e3e6ea; font-size: 14px; }
+  .step:last-child { border-bottom: 0; }
+  .step .ico { width: 20px; text-align: center; padding-top: 2px; }
+  .step .detail { font-size: 12px; color: #5f6b7a; }
+  .st-done .ico { color: #22a06b; } .st-failed .ico { color: #c9372c; }
+  .st-running .ico { color: #0c66e4; } .st-waiting .ico { color: #e2a03f; }
+  .bubble { padding: 8px 11px; border-radius: 12px; margin: 6px 0; font-size: 14px; max-width: 85%; }
+  .bubble.buyer { background: #efe4ff; }
+  .bubble.seller { background: #e0ecff; margin-left: auto; }
+  .bubble .who { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: #3b4450; }
+  .guard-note { font-size: 12px; color: #9c1c0c; margin-top: 2px; }
+  .sig-ok { color: #22a06b; } .sig-bad { color: #c9372c; }
+  .small-muted { font-size: 12px; color: #5f6b7a; }
+  .wallet-num { font-size: 30px; font-weight: 700; line-height: 1.1; }
+  #run:empty { display: none; }
+</style>
+
+{% if not beat.online %}
+<div class="alert alert-warning"><i class="fas fa-plug"></i> The agent worker is not running, so requests will wait in the queue. Start it with <code>python manage.py agent_worker</code> (run.bat opens it in its own window).</div>
+{% endif %}
+
+<div class="row">
+  <div class="col-lg-8">
+    <div class="card sa-card mb-3">
+      <div class="card-header bg-white">
+        <ul class="nav nav-tabs card-header-tabs sa-tabs" role="tablist">
+          <li class="nav-item"><a class="nav-link active" data-toggle="tab" href="#tab-plan" role="tab"><i class="fas fa-project-diagram"></i> Plan a project</a></li>
+          <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tab-delegate" role="tab"><i class="fas fa-user-clock"></i> Delegate a purchase</a></li>
+          <li class="nav-item"><a class="nav-link" data-toggle="tab" href="#tab-quote" role="tab"><i class="fas fa-handshake"></i> Bulk quote</a></li>
+        </ul>
+      </div>
+      <div class="card-body tab-content">
+        {# ---------- Plan ---------- #}
+        <div class="tab-pane fade show active" id="tab-plan" role="tabpanel">
+          <p class="small-muted mb-2">Describe what you want to build. The agent drafts a cart, checks budget, stock and part compatibility in code, and revises the cart if a check fails. You approve before anything is paid.</p>
+          <form id="plan-form">
+            <textarea id="goal" class="form-control mb-2" rows="2" placeholder="e.g. An air-quality monitor for my dorm room that I can check from my phone"></textarea>
+            <div class="form-inline">
+              <label class="mr-2">Budget $</label>
+              <input id="budget" class="form-control mr-2" type="number" min="1" step="1" style="width:110px" value="60">
+              <button class="btn btn-primary"><i class="fas fa-magic"></i> Plan it</button>
+            </div>
+          </form>
+          <div class="mt-2">{% for label, goal, budget in examples.plan %}
+            <button type="button" class="btn btn-sm btn-outline-secondary chip" data-goal="{{ goal }}" data-budget="{{ budget }}">{{ label }}</button>{% endfor %}</div>
+        </div>
+
+        {# ---------- Delegate ---------- #}
+        <div class="tab-pane fade" id="tab-delegate" role="tabpanel">
+          <p class="small-muted mb-2">Tell the agent what to buy for you later. It turns your words into a mandate (product, quantity, maximum price, expiry). After you sign, the money is held and the agent buys on its own the moment the conditions are met, even if you are offline.</p>
+          <form id="delegate-form">
+            <input id="instruction" class="form-control mb-2" placeholder="e.g. Buy 2 MQ-135 sensors when back in stock, max $6 each, within a week">
+            <button class="btn btn-primary"><i class="fas fa-file-signature"></i> Draft mandate</button>
+          </form>
+          <div class="mt-2">{% for text in examples.delegate %}
+            <button type="button" class="btn btn-sm btn-outline-secondary chip" data-instruction="{{ text }}">{{ text|truncatechars:60 }}</button>{% endfor %}</div>
+        </div>
+
+        {# ---------- Bulk quote ---------- #}
+        <div class="tab-pane fade" id="tab-quote" role="tabpanel">
+          <p class="small-muted mb-2">Buying for a lab or a club? Your agent negotiates with the store's agent. Your maximum price stays private; the store's floor stays private too. A guard in code stops either agent from crossing its owner's limit.
+            {% if negotiation_mode == "off" %}<strong>The store currently sells at list price only.</strong>{% else %}Discounts start at {{ min_qty }} units.{% endif %}</p>
+          <form id="quote-form" class="form-row">
+            <div class="col-md-6 mb-2">
+              <select id="q-product" class="form-control">
+                {% for p in products %}<option value="{{ p.id }}" data-price="{{ p.price }}" {% if "Uno" in p.title %}selected{% endif %}>{{ p.title }} (${{ p.price }}, {{ p.available }} in stock)</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2 mb-2"><input id="q-qty" class="form-control" type="number" min="1" max="100" value="10" title="Quantity"></div>
+            <div class="col-md-2 mb-2"><input id="q-max" class="form-control" type="number" min="0.01" step="0.01" placeholder="max $/unit" title="Your private maximum per unit"></div>
+            <div class="col-md-2 mb-2"><button class="btn btn-primary btn-block">Negotiate</button></div>
+          </form>
+          <div class="small-muted">Quantity, then the most you will pay per unit (private).</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="error" class="alert alert-danger d-none"></div>
+    <div id="run" class="card sa-card mb-3"></div>
+  </div>
+
+  <div class="col-lg-4" id="side">{% include "shopper/_side.html" %}</div>
+</div>
+{% endblock %}
+
+{% block extrascripts %}
+{{ block.super }}
+<script>
+(function () {
+  const csrf = "{{ csrf_token }}";
+  const urls = {
+    plan: "{% url 'shopper:plan' %}", parse: "{% url 'shopper:delegate-parse' %}",
+    create: "{% url 'shopper:delegate-create' %}", negotiate: "{% url 'shopper:negotiate' %}",
+    run: "{% url 'shopper:run' 0 %}", topup: "{% url 'shopper:topup' %}",
+  };
+  const $ = id => document.getElementById(id);
+  const runBox = $("run"), errBox = $("error");
+  let timer = null, currentRun = null;
+
+  async function post(url, body) {
+    const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": csrf},
+                                body: JSON.stringify(body || {})});
+    let data = {};
+    try { data = await r.json(); } catch (e) { data = {error: "Server error (" + r.status + ")"}; }
+    if (data.side) $("side").innerHTML = data.side;
+    return data;
+  }
+  function showError(msg) { errBox.textContent = msg; errBox.classList.toggle("d-none", !msg); }
+
+  // Poll one agent run and render its steps until it finishes
+  async function poll(id) {
+    currentRun = id;
+    clearTimeout(timer);
+    try {
+      const r = await fetch(urls.run.replace("/0/", "/" + id + "/")).then(x => x.json());
+      if (currentRun !== id) return;
+      runBox.innerHTML = r.html;
+      if (r.poll) timer = setTimeout(() => poll(id), r.status === "done" ? 3000 : 1500);
+      else refreshSide();
+    } catch (e) { timer = setTimeout(() => poll(id), 3000); }
+  }
+  async function refreshSide() {
+    const r = await fetch("{% url 'shopper:side' %}").then(x => x.json());
+    $("side").innerHTML = r.side;
+  }
+  async function start(url, body) {
+    showError("");
+    const r = await post(url, body);
+    if (r.error) return showError(r.error);
+    runBox.innerHTML = "<div class='card-body small-muted'>Queued...</div>";
+    poll(r.run_id);
+  }
+
+  $("plan-form").onsubmit = e => { e.preventDefault(); start(urls.plan, {goal: $("goal").value, budget: $("budget").value}); };
+  $("delegate-form").onsubmit = e => { e.preventDefault(); start(urls.parse, {text: $("instruction").value}); };
+  $("quote-form").onsubmit = e => {
+    e.preventDefault();
+    start(urls.negotiate, {product_id: $("q-product").value, quantity: $("q-qty").value, max_unit_price: $("q-max").value});
+  };
+  // Suggest a private limit 5% under list price when a product is picked
+  function suggestMax() {
+    const price = parseFloat($("q-product").selectedOptions[0].dataset.price);
+    $("q-max").value = (price * 0.95).toFixed(2);
+  }
+  $("q-product").onchange = suggestMax; suggestMax();
+
+  document.querySelectorAll("[data-goal]").forEach(b => b.onclick = () => { $("goal").value = b.dataset.goal; $("budget").value = b.dataset.budget; });
+  document.querySelectorAll("[data-instruction]").forEach(b => b.onclick = () => { $("instruction").value = b.dataset.instruction; });
+
+  // Buttons rendered inside the run card and the side panel (event delegation)
+  document.addEventListener("click", async e => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    e.preventDefault();
+    showError("");
+    btn.disabled = true;
+    const act = btn.dataset.act;
+    let r = {};
+    if (act === "pay" || act === "pay-deal" || act === "cancel") {
+      r = await post(btn.dataset.url);
+    } else if (act === "delegate") {
+      const box = btn.closest("[data-delegate]");
+      const val = name => box.querySelector("[name=" + name + "]").value;
+      r = await post(urls.create, {product_id: box.dataset.product, quantity: val("quantity"),
+                                   max_unit_price: val("max_unit_price"), days_valid: val("days_valid"), run_id: currentRun});
+    } else if (act === "topup") {
+      r = await post(urls.topup);
+    }
+    if (r.error) { showError(r.error); btn.disabled = false; return; }
+    if (currentRun && act !== "topup" && act !== "cancel") poll(currentRun);
+  });
+
+  {% if resume %}poll({{ resume.pk }});{% endif %}
+})();
+</script>
+{% endblock %}

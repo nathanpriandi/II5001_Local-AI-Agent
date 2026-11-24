@@ -1,0 +1,122 @@
+{% extends 'oscar/dashboard/layout.html' %}
+{% load i18n agent_tags %}
+
+{% block title %}Policy and autonomy | {{ block.super }}{% endblock %}
+
+{% block breadcrumbs %}
+<nav aria-label="breadcrumb">
+  <ol class="breadcrumb">
+    <li class="breadcrumb-item"><a href="{% url 'dashboard:index' %}">{% trans "Dashboard" %}</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'assistant-control' %}">Agent Control Center</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Policy and autonomy</li>
+  </ol>
+</nav>
+{% endblock %}
+
+{% block header %}
+<div class="page-header">
+  <h1><i class="fas fa-sliders-h"></i> Seller policy and autonomy level</h1>
+  <p class="text-muted mb-0">The Store Agent acts only inside this signed policy. The Mandate Guard enforces every number in code; the model never sees the limits as something it may change.</p>
+</div>
+{% endblock header %}
+
+{% block dashboard_content %}
+<style>
+  .lvl { border: 1px solid #e3e6ea; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; display: block; }
+  .lvl input { margin-right: 8px; }
+  .lvl.on { border-color: #0c66e4; background: #f2f7ff; }
+  .lvl .tag { font-weight: 700; }
+  .lvl .desc { font-size: 13px; color: #5f6b7a; margin-left: 22px; }
+  .sig { font-family: monospace; font-size: 12px; word-break: break-all; }
+</style>
+
+<div class="row">
+  <div class="col-lg-7">
+    <form method="post" class="card mb-3">
+      {% csrf_token %}
+      <div class="card-header font-weight-bold">Sign a new policy</div>
+      <div class="card-body">
+        <h6>Reordering from the supplier</h6>
+        {% for key, level in reorder_levels.items %}
+          <label class="lvl {% if policy.terms.reorder_mode == key %}on{% endif %}">
+            <input type="radio" name="reorder_mode" value="{{ key }}" {% if policy.terms.reorder_mode == key %}checked{% endif %}>
+            <span class="tag">{{ level.0 }}</span> ({{ key }})
+            <div class="desc">{{ level.1 }}</div>
+          </label>
+        {% endfor %}
+        <div class="form-group form-inline mt-2">
+          <label class="mr-2">Auto-approve purchase orders up to $</label>
+          <input class="form-control form-control-sm" style="width:110px" type="number" step="1" min="0" name="reorder_auto_limit" value="{{ policy.terms.reorder_auto_limit|floatformat:0 }}">
+        </div>
+
+        <h6 class="mt-4">Bulk-quote negotiation with buyers' agents</h6>
+        {% for key, level in negotiation_levels.items %}
+          <label class="lvl {% if policy.terms.negotiation_mode == key %}on{% endif %}">
+            <input type="radio" name="negotiation_mode" value="{{ key }}" {% if policy.terms.negotiation_mode == key %}checked{% endif %}>
+            <span class="tag">{{ level.0 }}</span> ({{ key }})
+            <div class="desc">{{ level.1 }}</div>
+          </label>
+        {% endfor %}
+        <div class="form-row mt-2">
+          <div class="form-group col-md-6"><label class="small">Maximum discount (%)</label>
+            <input class="form-control form-control-sm" type="number" step="1" min="0" max="30" name="max_discount_pct" value="{{ policy.terms.max_discount_pct|floatformat:0 }}"></div>
+          <div class="form-group col-md-6"><label class="small">Discounts start at (units)</label>
+            <input class="form-control form-control-sm" type="number" min="1" name="min_qty_for_discount" value="{{ policy.terms.min_qty_for_discount }}"></div>
+          <div class="form-group col-md-6"><label class="small">No discount if stock after the sale lasts fewer than (days)</label>
+            <input class="form-control form-control-sm" type="number" min="0" name="min_days_cover_after_sale" value="{{ policy.terms.min_days_cover_after_sale|floatformat:0 }}"></div>
+          <div class="form-group col-md-6"><label class="small">Maximum rounds per negotiation</label>
+            <input class="form-control form-control-sm" type="number" min="1" max="5" name="max_rounds" value="{{ policy.terms.max_rounds }}"></div>
+        </div>
+      </div>
+      <div class="card-footer text-right">
+        <button class="btn btn-primary"><i class="fas fa-file-signature"></i> Sign policy as {{ request.user.get_username }}</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-lg-5">
+    {% if policy %}
+    <div class="card mb-3">
+      <div class="card-header font-weight-bold">Active policy {{ policy.mandate.ref }}</div>
+      <div class="card-body small">
+        <p class="mb-1">Signed by <strong>{{ policy.mandate.owner.get_username }}</strong> on {{ policy.mandate.created|date:"M j, Y H:i" }}</p>
+        <p class="mb-1">Signature:
+          {% if policy.valid %}<span class="text-success"><i class="fas fa-check-circle"></i> matches the terms</span>
+          {% else %}<span class="text-danger"><i class="fas fa-times-circle"></i> does not match (edited after signing)</span>{% endif %}</p>
+        <div class="sig text-muted mb-2">HMAC-SHA256 {{ policy.mandate.signature|truncatechars:40 }}</div>
+        <table class="table table-sm mb-0">
+          {% for key, value in policy.mandate.terms.items %}<tr><td class="text-muted">{{ key|nice }}</td><td class="text-right"><code>{{ value }}</code></td></tr>{% endfor %}
+        </table>
+      </div>
+    </div>
+    {% endif %}
+    <div class="card mb-3">
+      <div class="card-header font-weight-bold">History</div>
+      <ul class="list-group list-group-flush small">
+        {% for m in history %}
+          <li class="list-group-item d-flex justify-content-between">
+            <span>{{ m.ref }} by {{ m.owner.get_username }}, {{ m.created|date:"M j H:i" }}
+              {% if m.valid %}<i class="fas fa-check-circle text-success"></i>{% else %}<i class="fas fa-times-circle text-danger"></i>{% endif %}</span>
+            <span class="badge {{ m.status|status_badge }}">{{ m.status }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-body small text-muted">
+        Levels follow Feng, McDonald and Zhang (2025), "Levels of Autonomy for AI Agents": the user's role changes from operator (L1) to collaborator (L2), consultant (L3), approver (L4) and observer (L5).
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock dashboard_content %}
+
+{% block extrascripts %}
+{{ block.super }}
+<script>
+  // Highlight the selected level card
+  document.querySelectorAll(".lvl input").forEach(inp => inp.addEventListener("change", () => {
+    document.querySelectorAll(`input[name='${inp.name}']`).forEach(o => o.closest(".lvl").classList.toggle("on", o.checked));
+  }));
+</script>
+{% endblock %}
