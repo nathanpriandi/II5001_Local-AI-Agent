@@ -10,6 +10,8 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     # AI assistant, mounted inside the dashboard area (staff only)
     path("dashboard/assistant/", include(apps.get_app_config("assistant_dashboard").urls[0])),
+    # Buyer-facing Shopping Agent pages
+    path("agent/", include("shopper.urls")),
     # Everything else: Oscar storefront + dashboard
     path("", include(apps.get_app_config("oscar").urls[0])),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -67,8 +67,10 @@ INSTALLED_APPS = [
     "sorl.thumbnail",
     "django_tables2",
 
-    # Our new component: the local AI agent inside the Oscar dashboard
+    # Our components: agentic core, staff dashboard pages, buyer storefront pages
+    "agentic.apps.AgenticConfig",
     "assistant.apps.AssistantDashboardConfig",
+    "shopper.apps.ShopperConfig",
 ]
 
 SITE_ID = 1
@@ -90,7 +92,7 @@ ROOT_URLCONF = "shopsite.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
+        "DIRS": [BASE_DIR / "templates"],  # project overrides (storefront navigation)
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -114,6 +116,8 @@ DATABASES = {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
         "ATOMIC_REQUESTS": True,
+        # WAL lets the web server read while the agent worker writes; wait up to 30 s for locks
+        "OPTIONS": {"timeout": 30, "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;"},
     }
 }
 
@@ -149,17 +153,24 @@ DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 # Oscar shop settings
 # ---------------------------------------------------------------------------
 OSCAR_SHOP_NAME = "Campus Tech Store"
-OSCAR_SHOP_TAGLINE = "Demo shop with a local AI assistant"
+OSCAR_SHOP_TAGLINE = "with local AI agents"
 OSCAR_DEFAULT_CURRENCY = "USD"
 
-# Add the AI assistant to the dashboard's top navigation bar
+# "AI Agents" menu in the dashboard's top navigation bar
 OSCAR_DASHBOARD_NAVIGATION = OSCAR_DASHBOARD_NAVIGATION + [  # noqa: F405
     {
-        "label": _("AI Assistant"),
+        "label": _("AI Agents"),
         "icon": "fas fa-robot",
-        "url_name": "assistant-index",
+        "children": [
+            {"label": _("Agent Control Center"), "url_name": "assistant-control"},
+            {"label": _("Store Agent chat"), "url_name": "assistant-index"},
+            {"label": _("Policy and autonomy"), "url_name": "assistant-policy"},
+        ],
     },
 ]
+
+LOGIN_URL = "customer:login"
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"  # no mail server needed
 
 # ---------------------------------------------------------------------------
 # Local AI model settings (Ollama)
@@ -167,3 +178,5 @@ OSCAR_DASHBOARD_NAVIGATION = OSCAR_DASHBOARD_NAVIGATION + [  # noqa: F405
 OLLAMA_MODEL = os.environ.get("MODEL", "qwen3:4b")
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
 ASSISTANT_LOW_STOCK_THRESHOLD = 5
+AGENT_NUM_CTX = int(os.environ.get("AGENT_NUM_CTX", "8192"))
+AGENT_SCAN_MINUTES = int(os.environ.get("AGENT_SCAN_MINUTES", "30"))  # 0 = no periodic stock scan

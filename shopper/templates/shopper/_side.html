@@ -1,0 +1,64 @@
+{% load agent_tags %}
+<div class="card sa-card mb-3">
+  <div class="card-body">
+    <div class="small-muted">Campus Wallet (demo stored value)</div>
+    <div class="wallet-num">${{ wallet.balance }}</div>
+    <div class="small-muted">{% if wallet.held %}${{ wallet.held }} held for delegations{% else %}nothing held{% endif %}</div>
+    <button class="btn btn-sm btn-outline-secondary mt-2" data-act="topup"><i class="fas fa-plus"></i> Add $50</button>
+    {% if entries %}
+    <ul class="list-unstyled small mt-3 mb-0">
+      {% for e in entries %}
+        <li class="d-flex justify-content-between border-top py-1">
+          <span class="text-truncate mr-2" title="{{ e.note }}">{{ e.note }}</span>
+          <span class="text-nowrap {% if e.amount < 0 %}text-danger{% else %}text-success{% endif %}">{{ e.amount }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card sa-card mb-3">
+  <div class="card-header bg-white"><strong><i class="fas fa-user-clock"></i> Your delegations</strong></div>
+  <div class="card-body py-2">
+    {% for d in delegations %}
+      <div class="border-bottom py-2">
+        <div class="d-flex justify-content-between">
+          <span><strong>{{ d.ref }}</strong> {{ d.terms.quantity }} x {{ d.product.title }}
+            {% if d.valid %}<i class="fas fa-check-circle sig-ok" title="signed terms unchanged"></i>{% else %}<i class="fas fa-times-circle sig-bad" title="terms changed after signing"></i>{% endif %}</span>
+          <span class="badge {{ d.status|status_badge }} align-self-start ml-2">{{ d.status }}</span>
+        </div>
+        <div class="small-muted">
+          {% if d.status == "active" %}Max ${{ d.terms.max_unit_price }} each, ${{ d.terms.hold }} held, until {{ d.expires_at|date:"M j H:i" }}
+          {% else %}{{ d.outcome }}{% endif %}
+        </div>
+        {% if d.status == "active" %}
+          <button class="btn btn-sm btn-link text-danger p-0" data-act="cancel" data-url="{% url 'shopper:delegate-cancel' d.pk %}">Cancel and release funds</button>
+        {% endif %}
+      </div>
+    {% empty %}
+      <div class="small-muted py-2">None yet. Out-of-stock items in a plan, or the "Delegate a purchase" tab, create one.</div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card sa-card mb-3">
+  <div class="card-header bg-white"><strong><i class="fas fa-receipt"></i> Recent orders</strong></div>
+  <ul class="list-group list-group-flush small">
+    {% for o in orders %}
+      <li class="list-group-item d-flex justify-content-between">
+        <a href="{% url 'customer:order' order_number=o.number %}">{{ o.number }}</a>
+        <span>{{ o.date_placed|date:"M j" }} | ${{ o.total_incl_tax }} | {{ o.status }}</span>
+      </li>
+    {% empty %}
+      <li class="list-group-item small-muted">No orders yet.</li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="card sa-card mb-3">
+  <div class="card-body small-muted">
+    <strong class="text-dark">What your agent may do</strong><br>
+    Only what you signed: a cart you approved, a delegation with a price cap and an expiry, or a negotiation with a private limit. Each mandate is signed (HMAC-SHA256); if its terms change after signing, the agent refuses it. Checks on money and stock run in code, outside the model.
+  </div>
+</div>

@@ -22,7 +22,7 @@ class AssistantDashboardConfig(OscarDashboardConfig):
 
     def get_urls(self):
         # Imported here because views use models, which are not ready at import time
-        from . import views
+        from . import control, views
 
         urls = [
             path("", views.index, name="assistant-index"),
@@ -31,6 +31,14 @@ class AssistantDashboardConfig(OscarDashboardConfig):
             path("cancel/<str:action_id>/", views.cancel_action, name="assistant-cancel"),
             path("reset/", views.reset, name="assistant-reset"),
             path("snapshot/", views.snapshot, name="assistant-snapshot"),
+            # Agent Control Center
+            path("control/", control.control, name="assistant-control"),
+            path("control/panel/", control.control_panel, name="assistant-control-panel"),
+            path("control/po/<int:pk>/<str:action>/", control.po_action, name="assistant-po"),
+            path("control/deal/<int:pk>/<str:action>/", control.deal_action, name="assistant-deal"),
+            path("control/run/<str:kind>/", control.start_run, name="assistant-run"),
+            path("control/tamper/<int:pk>/", control.tamper, name="assistant-tamper"),
+            path("policy/", control.policy, name="assistant-policy"),
         ]
         # post_process_urls wraps each view with Oscar's permission decorator
         return self.post_process_urls(urls)

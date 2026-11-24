@@ -1,0 +1,236 @@
+{% load agent_tags %}
+{# ---------- Status strip ---------- #}
+<div class="row mb-3">
+  <div class="col-lg-4 mb-2">
+    <div class="tile">
+      <div class="lbl">Agent worker</div>
+      {% if beat.online %}
+        <div class="mt-1"><span class="dot on"></span><strong>Online</strong></div>
+        <div class="small-muted mt-1">{% if beat.current %}Working on {{ beat.current }}{% else %}Idle, listening for store events{% endif %}</div>
+      {% else %}
+        <div class="mt-1"><span class="dot off"></span><strong>Offline</strong></div>
+        <div class="small-muted mt-1">Start it with <code>python manage.py agent_worker</code> (run.bat does this).</div>
+      {% endif %}
+      {% if policy %}
+      <div class="small-muted mt-2">
+        Policy <a href="{% url 'assistant-policy' %}">{{ policy.mandate.ref }}</a>
+        {% if policy.valid %}<i class="fas fa-check-circle sig-ok" title="signature valid"></i>{% else %}<i class="fas fa-times-circle sig-bad" title="signature invalid"></i>{% endif %}
+        signed by {{ policy.mandate.owner.get_username }}<br>
+        Reorders: <strong>{{ policy.reorder_level.0 }}</strong>{% if policy.terms.reorder_mode == "auto" %} up to ${{ policy.terms.reorder_auto_limit|floatformat:0 }}{% endif %}<br>
+        Bulk deals: <strong>{{ policy.negotiation_level.0 }}</strong>{% if policy.terms.negotiation_mode != "off" %}, max {{ policy.terms.max_discount_pct|floatformat:0 }}% off{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-lg-8">
+    <div class="row">
+      <div class="col-6 col-md-3 mb-2"><div class="tile"><div class="num">{{ stats.autonomous_pos }}</div><div class="lbl">purchase orders placed by the Store Agent on its own</div></div></div>
+      <div class="col-6 col-md-3 mb-2"><div class="tile"><div class="num">{{ stats.delegated_buys }}</div><div class="lbl">purchases made by Shopping Agents while the buyer was away</div></div></div>
+      <div class="col-6 col-md-3 mb-2"><div class="tile"><div class="num">{{ stats.deals }}</div><div class="lbl">bulk deals closed agent-to-agent</div></div></div>
+      <div class="col-6 col-md-3 mb-2"><div class="tile"><div class="num">{{ stats.blocked }}</div><div class="lbl">agent moves blocked or corrected by the Mandate Guard</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-lg-7">
+    {# ---------- Inbox ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-inbox"></i> Needs your decision</div>
+      <div class="card-body py-2">
+        {% for po in inbox_pos %}
+          <div class="d-flex justify-content-between align-items-start border-bottom py-2">
+            <div>
+              <strong>{{ po.ref }}</strong> {{ po.quantity }} x {{ po.product.title }} = <strong>${{ po.amount }}</strong>
+              <div class="small-muted">{{ po.created_by }}: {{ po.reason }}</div>
+            </div>
+            <div class="text-nowrap ml-2">
+              <form method="post" action="{% url 'assistant-po' po.pk 'approve' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-success">Approve</button></form>
+              <form method="post" action="{% url 'assistant-po' po.pk 'reject' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-outline-danger">Reject</button></form>
+            </div>
+          </div>
+        {% endfor %}
+        {% for n in inbox_deals %}
+          <div class="d-flex justify-content-between align-items-start border-bottom py-2">
+            <div>
+              <strong>{{ n.ref }}</strong> bulk deal: {{ n.quantity }} x {{ n.product.title }} at <strong>${{ n.deal_price }}</strong> (list ${{ n.list_price }})
+              <div class="small-muted">Agreed by the agents for {{ n.buyer.get_username }}; total ${{ n.deal_total|floatformat:2 }} instead of ${{ n.list_total|floatformat:2 }}</div>
+            </div>
+            <div class="text-nowrap ml-2">
+              <form method="post" action="{% url 'assistant-deal' n.pk 'approve' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-success">Approve</button></form>
+              <form method="post" action="{% url 'assistant-deal' n.pk 'reject' %}" class="d-inline">{% csrf_token %}<button class="btn btn-sm btn-outline-danger">Reject</button></form>
+            </div>
+          </div>
+        {% endfor %}
+        {% if not inbox_pos and not inbox_deals %}
+          <div class="empty"><i class="fas fa-check"></i> Nothing waiting. The agents are working inside the signed policy.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---------- Purchase orders ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-truck"></i> Purchase orders to the supplier</div>
+      <div class="card-body py-2">
+        {% for po in on_the_way %}
+          <div class="d-flex justify-content-between align-items-start border-bottom py-2">
+            <div>
+              <strong>{{ po.ref }}</strong> {{ po.quantity }} x {{ po.product.title }} = ${{ po.amount }}
+              <span class="badge badge-info">on the way</span>
+              <div class="small-muted">Approved by {{ po.approved_by }}{% if po.reason %}. {{ po.reason }}{% endif %}</div>
+            </div>
+            <form method="post" action="{% url 'assistant-po' po.pk 'receive' %}" class="ml-2">{% csrf_token %}
+              <button class="btn btn-sm btn-primary text-nowrap"><i class="fas fa-box-open"></i> Receive delivery</button></form>
+          </div>
+        {% empty %}
+          <div class="empty">No deliveries on the way.</div>
+        {% endfor %}
+        {% for po in recent_pos %}
+          <div class="small-muted py-1">{{ po.ref }} {{ po.quantity }} x {{ po.product.title }}: {{ po.status }}{% if po.received_at %} {{ po.received_at|date:"M j H:i" }}{% endif %}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# ---------- Stock watch ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-exclamation-triangle"></i> Stock watch</div>
+      <div class="card-body p-0">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Product</th><th>Avail.</th><th>Sold/day</th><th>Days left</th><th>Delegated</th><th></th></tr></thead>
+          <tbody>
+          {% for m in low %}
+            <tr>
+              <td>{{ m.title }}</td>
+              <td>{% if m.available <= 0 %}<span class="badge badge-danger">0</span>{% else %}{{ m.available }}{% endif %}</td>
+              <td>{{ m.avg_daily_sales }}</td>
+              <td>{% if m.days_of_cover >= 999 %}-{% else %}{{ m.days_of_cover }}{% endif %}</td>
+              <td>{{ m.delegated|default:"-" }}</td>
+              <td class="text-right">
+                {% if m.open_po %}<span class="small-muted">{{ m.open_po.ref }} {{ m.open_po.status|nice }}</span>
+                {% else %}
+                <form method="post" action="{% url 'assistant-run' 'stock_check' %}">{% csrf_token %}
+                  <input type="hidden" name="product_id" value="{{ m.product_id }}">
+                  <button class="btn btn-sm btn-outline-primary py-0">Ask agent</button></form>
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="empty px-3">All products above their low-stock threshold.</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    {# ---------- Briefing ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-newspaper"></i> Store Agent briefing
+        {% if briefing_running %}<span class="badge badge-warning ml-1">writing...</span>{% endif %}</div>
+      <div class="card-body">
+        {% if briefing %}
+          <h6 class="mb-2">{{ briefing.result.briefing.headline }}</h6>
+          <ul class="mb-2 pl-3">{% for p in briefing.result.briefing.points %}<li>{{ p }}</li>{% endfor %}</ul>
+          {% if briefing.result.briefing.recommended_actions %}
+          <div class="small font-weight-bold">Recommended</div>
+          <ul class="mb-1 pl-3 small">{% for a in briefing.result.briefing.recommended_actions %}<li>{{ a }}</li>{% endfor %}</ul>
+          {% endif %}
+          <div class="small-muted">{{ briefing.finished|date:"M j H:i" }} | model {{ briefing.llm_seconds|floatformat:0 }}s</div>
+        {% else %}
+          <div class="empty">No briefing yet. Click "Write briefing".</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ---------- Delegations ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-user-clock"></i> Buyer delegations (intent mandates)</div>
+      <div class="card-body py-2">
+        {% for d in delegations %}
+          <div class="border-bottom py-2">
+            <div class="d-flex justify-content-between">
+              <div>
+                <strong>{{ d.ref }}</strong> {{ d.owner.get_username }}: {{ d.terms.quantity }} x {{ d.product.title }}, max ${{ d.terms.max_unit_price }}
+                {% if d.valid %}<i class="fas fa-check-circle sig-ok" title="signature valid"></i>{% else %}<i class="fas fa-times-circle sig-bad" title="signature does not match"></i>{% endif %}
+              </div>
+              <span class="badge {{ d.status|status_badge }} align-self-start ml-2">{{ d.status }}</span>
+            </div>
+            <div class="small-muted">
+              {% if d.status == "active" %}${{ d.terms.hold }} held, expires {{ d.expires_at|date:"M j H:i" }}{% else %}{{ d.outcome }}{% endif %}
+            </div>
+            {% if d.status == "active" %}
+            <form method="post" action="{% url 'assistant-tamper' d.pk %}" class="mt-1">{% csrf_token %}
+              <button class="btn btn-sm btn-outline-warning py-0" title="Edits the terms without the buyer's signature">Demo: tamper with terms</button></form>
+            {% endif %}
+          </div>
+        {% empty %}
+          <div class="empty">No delegations yet. Buyers create them on the Shopping Agent page.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {# ---------- Negotiations ---------- #}
+    <div class="card cc-card mb-3">
+      <div class="card-header"><i class="fas fa-handshake"></i> Agent-to-agent negotiations</div>
+      <div class="card-body py-2">
+        {% for n in negotiations %}
+          <details id="neg-{{ n.pk }}" class="border-bottom py-2">
+            <summary>
+              <strong>{{ n.ref }}</strong> {{ n.quantity }} x {{ n.product.title }}
+              <span class="badge {{ n.status|status_badge }}">{{ n.status|nice }}</span>
+              {% if n.deal_price %}<span class="small-muted">${{ n.deal_price }} vs list ${{ n.list_price }}</span>{% endif %}
+            </summary>
+            <div class="small-muted mt-1">Seller floor (private): {% if n.floor_price %}${{ n.floor_price }}{% else %}none{% endif %} | {{ n.floor_reason }}</div>
+            {% for msg in n.messages.all %}
+              <div class="bubble {{ msg.side }}">
+                <strong>{% if msg.side == "buyer" %}Shopping Agent{% else %}Store Agent{% endif %}</strong>
+                {{ msg.action }}{% if msg.unit_price %} ${{ msg.unit_price }}{% endif %}: {{ msg.message }}
+                {% if msg.guard_note %}<div class="guard-note"><i class="fas fa-shield-alt"></i> Guard: {{ msg.guard_note }}{% if msg.proposed_price and msg.proposed_price != msg.unit_price %} (model said ${{ msg.proposed_price }}){% endif %}</div>{% endif %}
+              </div>
+            {% endfor %}
+          </details>
+        {% empty %}
+          <div class="empty">No negotiations yet. Buyers start them with "Bulk quote".</div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# ---------- Audit log ---------- #}
+<div class="card cc-card mb-3">
+  <div class="card-header"><i class="fas fa-clipboard-list"></i> Activity log (every agent action, newest first)</div>
+  <div class="card-body p-0" style="max-height: 560px; overflow-y: auto;">
+    <table class="table table-sm mb-0 log">
+      <tbody>
+      {% for a in actions %}
+        <tr class="lvl-{{ a.level }}">
+          <td class="text-nowrap small-muted pl-2">{{ a.created|date:"H:i:s" }}</td>
+          <td><span class="actor {{ a.actor|actor_class }}">{{ a.actor }}</span></td>
+          <td><strong>{{ a.verb }}</strong>{% if a.detail %}<div class="small-muted">{{ a.detail }}</div>{% endif %}</td>
+          <td class="text-nowrap small-muted pr-2">{% if a.mandate %}{{ a.mandate.ref }}{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td class="empty px-3">No agent activity yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---------- Runs ---------- #}
+<details id="runs" class="mb-4">
+  <summary class="small-muted">Agent runs (queue)</summary>
+  <table class="table table-sm mt-2">
+    <thead><tr><th>#</th><th>Kind</th><th>Product</th><th>Status</th><th>Model time</th><th>Created</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr><td>{{ r.pk }}</td><td>{{ r.kind }}</td><td>{{ r.product.title|default:"-" }}</td>
+          <td><span class="badge {{ r.status|status_badge }}">{{ r.status }}</span>{% if r.error %} <span class="small text-danger">{{ r.error|truncatechars:80 }}</span>{% endif %}</td>
+          <td>{% if r.llm_seconds %}{{ r.llm_seconds|floatformat:0 }}s{% else %}-{% endif %}</td>
+          <td class="small-muted">{{ r.created|date:"H:i:s" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
